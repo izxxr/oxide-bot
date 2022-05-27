@@ -87,7 +87,7 @@ class Bot(commands.Bot):
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.DEBUG,
-        format="[%(asctime)s %(module)s:%(lineno)s] [%(levelname)s] %(message)s"
+        format="[%(asctime)s] [%(module)s:%(lineno)s] [%(levelname)s] %(message)s"
     )
 
     bot = Bot()
