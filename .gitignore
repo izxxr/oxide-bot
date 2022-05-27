@@ -1,0 +1,6 @@
+__pycache__/
+storage/*
+tests/*
+
+!storage/.placeholder
+!tests/.placeholder
