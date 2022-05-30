@@ -28,7 +28,7 @@ class OxideBot(commands.Bot):
     def __init__(self) -> None:
         super().__init__(
             command_prefix="?",
-            intents=discord.Intents.default(),
+            intents=discord.Intents.all(),
             description="A generic Discord bot.",
             max_messages=None,
             allowed_mentions=discord.AllowedMentions(
