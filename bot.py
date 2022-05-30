@@ -62,7 +62,7 @@ class OxideBot(commands.Bot):
         # Stripping the entry here prevents trailing whitespaces
         # when whitespaces are used between comma and extension
         # names.
-        exclude = [item.strip() for item in env.EXTS_DIRECTORY.split(",")]
+        exclude = [item.strip() for item in env.EXTS_EXCLUDE.split(",")]
         failed = 0
         processed = 0
         for file in os.listdir(env.EXTS_DIRECTORY):
