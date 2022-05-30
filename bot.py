@@ -35,6 +35,7 @@ class OxideBot(commands.Bot):
                 everyone=False,
                 users=False,
                 roles=False,
+                replied_user=True,
             ),
         )
         self.version: str = __version__
