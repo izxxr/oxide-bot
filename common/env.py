@@ -58,3 +58,4 @@ BOT_TOKEN = os.environ.get("OXIDE_BOT_TOKEN")
 EXTS_DIRECTORY = os.environ.get("OXIDE_EXTS_DIRECTORY", "cogs/")
 EXTS_EXCLUDE = os.environ.get("OXIDE_EXTS_EXCLUDE", "")
 DEBUG_MODE = _process_boolean(os.environ.get("OXIDE_DEBUG_MODE", "0")) or "--debug" in sys.argv
+DEBUG_GUILD_ID = os.environ.get("OXIDE_DEBUG_GUILD_ID")

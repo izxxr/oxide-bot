@@ -92,4 +92,6 @@ class OxideBot(commands.Bot):
         This hook is used to perform pre-connect asynchronous initalization
         such as extensions setup.
         """
+        if env.DEBUG_MODE and env.DEBUG_GUILD_ID:
+            self.tree.copy_global_to(guild=discord.Object(id=int(env.DEBUG_GUILD_ID)))
         await self._setup_extensions(clean=False)

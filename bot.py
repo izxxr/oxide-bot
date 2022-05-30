@@ -12,6 +12,8 @@ if __name__ == "__main__":
         format="[%(asctime)s] [%(name)s:%(lineno)s] [%(levelname)s] %(message)s"
     )
     logging.getLogger("discord").setLevel(logging.INFO)
+    logging.getLogger("aiosqlite").setLevel(logging.INFO)
+
     bot = OxideBot()
 
     if env.BOT_TOKEN is None:
