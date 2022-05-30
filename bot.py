@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import os
 import logging
@@ -13,11 +13,13 @@ from common import env
 if TYPE_CHECKING:
     from aiohttp import ClientSession
 
-
 _log = logging.getLogger(__name__)
 
+# Meta data
+__version__ = "1.0.0a1"
 
-class Bot(commands.Bot):
+
+class OxideBot(commands.Bot):
     """A class that maintains the bot.
 
     This is a subclass of :class:`discord.ext.commands.Bot` with some
@@ -27,7 +29,7 @@ class Bot(commands.Bot):
         super().__init__(
             command_prefix="?",
             intents=discord.Intents.default(),
-            description="Suggestions made easy",
+            description="A generic Discord bot.",
             max_messages=None,
             allowed_mentions=discord.AllowedMentions(
                 everyone=False,
@@ -35,6 +37,7 @@ class Bot(commands.Bot):
                 roles=False,
             ),
         )
+        self.version: str = __version__
 
     async def on_ready(self) -> None:
         user = self.user
@@ -50,7 +53,11 @@ class Bot(commands.Bot):
         """
         return self.http.__HTTPClient_session  # type: ignore
 
-    async def _setup_extensions(self) -> None:
+    async def _setup_extensions(self, *, clean: bool = False) -> None:
+        if clean:
+            for name, _ in self.extensions.items():
+                await self.unload_extension(name)
+
         # Stripping the entry here prevents trailing whitespaces
         # when whitespaces are used between comma and extension
         # names.
@@ -81,16 +88,17 @@ class Bot(commands.Bot):
         This hook is used to perform pre-connect asynchronous initalization
         such as extensions setup.
         """
-        await self._setup_extensions()
+        await self._setup_extensions(clean=False)
 
 
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.DEBUG,
-        format="[%(asctime)s] [%(module)s:%(lineno)s] [%(levelname)s] %(message)s"
+        format="[%(asctime)s] [%(name)s:%(lineno)s] [%(levelname)s] %(message)s"
     )
+    logging.getLogger("discord").setLevel(logging.INFO)
 
-    bot = Bot()
+    bot = OxideBot()
 
     if env.BOT_TOKEN is None:
         raise RuntimeError("'OXIDE_BOT_TOKEN' enivornement variable is not set.")

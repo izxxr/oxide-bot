@@ -7,6 +7,10 @@ of maintainence and readibility. Most configuration constants are given
 default values internally when they are not supplied in env file while
 few are required such as `OXIDE_BOT_TOKEN`.
 
+For enivornment variables that need booleans, Any value except 'false' and '0'
+will be considered true. Note that case here is insensitive and is completely
+ignored while processing booleans.
+
 Configuration options
 ---------------------
 
@@ -22,19 +26,29 @@ OXIDE_DEBUG_MODE:
     A boolean representing whether the bot is being ran in debug mode.
     In debug mode, the global application commands would be moved to
     given "DEBUG_GUILD_ID" guild in command tree for ease of debugging.
+
+    For the sake of convenience, this value can also be set to True
+    by passing "--debug-mode" flag while running the bot.
+
+    Example::
+
+        python bot.py --debug-mode
 """
 
 from __future__ import annotations
 
 import os
 import dotenv
+import sys
 
 
 def _process_boolean(val: str) -> bool:
     return val.lower() not in ("false", "0")
 
 
-dotenv.load_dotenv()
+# Type checker cries about load_dotenv()'s type being
+# partially unknown so here we are
+dotenv.load_dotenv()  # type: ignore
 
 
 # Required
@@ -43,4 +57,4 @@ BOT_TOKEN = os.environ.get("OXIDE_BOT_TOKEN")
 # Optional/default
 EXTS_DIRECTORY = os.environ.get("OXIDE_EXTS_DIRECTORY", "cogs/")
 EXTS_EXCLUDE = os.environ.get("OXIDE_EXTS_EXCLUDE", "")
-DEBUG_MODE = _process_boolean(os.environ.get("OXIDE_DEBUG_MODE", "0"))
+DEBUG_MODE = _process_boolean(os.environ.get("OXIDE_DEBUG_MODE", "0")) or "--debug" in sys.argv

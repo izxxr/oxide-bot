@@ -1,6 +1,7 @@
 __pycache__/
-storage/*
+databases/*
 tests/*
 
-!storage/.placeholder
+!databases/.placeholder
 !tests/.placeholder
+.env
