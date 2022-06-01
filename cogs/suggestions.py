@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from typing_extensions import Self
 from dataclasses import dataclass
 from discord.ext import commands
@@ -56,6 +56,143 @@ SETTINGS: Dict[str, Setting] = {
                        disable_note="Temporarily disable suggestions in this channel."),
 }
 
+
+class SuggestionConfirmation(ui.View):
+    def __init__(
+        self,
+        *,
+        author: discord.abc.Snowflake,
+        data: Dict[str, Any],
+        channel: discord.TextChannel,
+        attachment: Optional[discord.Attachment] = None,
+    ) -> None:
+        super().__init__()
+        self.author = author
+        self.data = data
+        self.channel = channel
+        self.attachment = attachment
+
+    @ui.button(label="Post", style=discord.ButtonStyle.green)
+    async def post(self, interaction: discord.Interaction, button: ui.Button[Self]) -> None:
+        modal = SuggestionEntryModal(data=self.data, channel=self.channel, attachment=self.attachment)
+        await interaction.response.send_modal(modal)
+        self.stop()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message(f"{CustomEmoji.CROSS} You cannot interact with this.")
+            return False
+
+        return True
+
+
+class SuggestionEntryModal(ui.Modal):
+    suggestion: ui.TextInput[Self] = ui.TextInput(
+        label="Suggestion",
+        style=discord.TextStyle.long,
+        placeholder="Enter your suggestion (10-4000 characters)",
+        required=True,
+        min_length=10,
+        max_length=4000,
+    )
+    suggestion_type: ui.Select[Self] = ui.Select(
+        options=[
+            discord.SelectOption(label="Normal", value="0", description="Non-anonymous suggestion", default=True),
+            discord.SelectOption(label="Anonymous", value="1", description="Anonymous suggestion, only moderators can see the author.")
+        ],
+        disabled=False,
+    )
+
+    def __init__(
+        self,
+        *,
+        data: Dict[str, Any],
+        channel: discord.TextChannel,
+        attachment: Optional[discord.Attachment] = None,
+    ) -> None:
+        super().__init__(title="Posting a suggestion")
+        self.data = data
+        self.channel = channel
+        self.attachment = attachment
+
+        # TODO: Discord currently has a bug where disabled select inside
+        # a modal cause internal error, so this currently does not work
+        # if data["allow_anonymous"]:
+        #     self.suggestion_type.disabled = False
+        # else:
+        #     self.suggestion_type.disabled = True
+
+        if attachment:
+            self.suggestion.required = False
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        is_anonymous = int(self.suggestion_type.values[0])
+
+        # TODO: Remove this check when Discord bug is fixed
+        if is_anonymous and not self.data["allow_anonymous"]:
+            await interaction.response.edit_message(content=f"{CustomEmoji.CROSS} Anonymous suggestions are not allowed in this channel.", view=None, embed=None)
+            return
+
+        channel = self.channel
+
+        async with connect("databases/suggestions.db") as conn:
+            suggestions = await conn.execute(
+                "SELECT message_id FROM store WHERE guild_id = ?",
+                (interaction.guild_id,),
+                fetch_all=True,
+            )
+            suggestion_id = len(suggestions) + 1
+            embed = discord.Embed(
+                title=f"Suggestion #{suggestion_id}",
+                color=Color.NEUTRAL,
+                timestamp=discord.utils.utcnow(),
+            )
+
+            content = self.suggestion.value
+            attachment = self.attachment
+            if content:
+                embed.description = content
+            if attachment:
+                if attachment.content_type and attachment.content_type.startswith("image/"):
+                    embed.set_image(url=attachment.url)
+                else:
+                    embed.add_field(name="Attachment", value=f"[{attachment.filename}]({attachment.url})")
+            if is_anonymous:
+                embed.set_author(name="Anonymous Suggestion")
+            else:
+                embed.set_author(name=interaction.user.name, icon_url=interaction.user.display_avatar.url)
+            embed.set_footer(text="Status: Pending")
+
+            try:
+                message = await channel.send(embed=embed)
+                await message.add_reaction("<:upvote:967992002056695859>")
+                await message.add_reaction("<:downvote:967992002371285032>")
+            except discord.Forbidden:
+                await interaction.response.edit_message(
+                    content=f"{CustomEmoji.CROSS} Failed to send message in {channel.mention}",
+                    embed=None,
+                    view=None
+                )
+            else:
+                await conn.execute(
+                    """INSERT INTO store (guild_id, channel_id, author_id, message_id, content,
+                    attachment_url, anonymous, status, edited_at, action_updated_at, action_note)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)""",
+                    (interaction.guild_id, channel.id, interaction.user.id, message.id, content,
+                    attachment and attachment.url, is_anonymous, 0),  # type: ignore
+                )
+                embed = discord.Embed(
+                    title=f"{CustomEmoji.SUCCESS} Suggestions • Posted",
+                    description=f"Successfully posted a suggestion. The suggestion ID is #{suggestion_id}.",
+                    color=Color.SUCCESS,
+                )
+                embed.add_field(name="Jump URL", value=f"[Click here...]({message.jump_url})")
+
+                if is_anonymous:
+                    await interaction.response.defer()
+                    await interaction.user.send(embed=embed)
+                else:
+                    await interaction.response.edit_message(embed=embed, view=None, content=None)
 
 class ChannelSelection(ui.View):
     def __init__(self, *, author: discord.abc.Snowflake, timeout: Optional[float] = 180):
@@ -256,9 +393,8 @@ class SuggestionSettings(ui.View):
 
         return True
 
-@app_commands.default_permissions(manage_channels=True)
-@app_commands.guild_only()
-class Suggestions(commands.GroupCog, group_name="suggestions"):
+
+class Suggestions(commands.Cog):
     """Manage suggestion channels with ease."""
 
     def __init__(self, bot: OxideBot) -> None:
@@ -268,9 +404,10 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
         self,
         interaction: discord.Interaction,
         *,
-        prompt: str = "Select the target suggestion channel"
+        prompt: str = "Select the target suggestion channel",
+        ephemeral: bool = False,
     ) -> Optional[discord.TextChannel]:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=ephemeral)
 
         embed = discord.Embed(title="Suggestions • Channel Selection", color=Color.NEUTRAL)
         guild: discord.Guild = interaction.guild  # type: ignore
@@ -279,14 +416,14 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
         channel_ids = await view.setup(guild)
 
         if not channel_ids:
-            await interaction.followup.send(content="No channel has suggestions setup in this server. Use `/suggestions setup` to setup one.")
+            await interaction.followup.send(content="No channel has suggestions setup in this server. Use `/suggestions setup` to setup one.", ephemeral=ephemeral)
             return
 
         if len(channel_ids) == 1:
             channel = guild.get_channel(int(channel_ids[0]))
         else:
             embed.description = prompt
-            message = await interaction.followup.send(view=view, wait=True, embed=embed)
+            message = await interaction.followup.send(view=view, wait=True, embed=embed, ephemeral=ephemeral)
             timed_out = await view.wait()
 
             if timed_out:
@@ -305,7 +442,60 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
 
         return channel  # type: ignore # Always TextChannel
 
+    suggestions = app_commands.Group(
+        name="suggestions",
+        description="Manage suggestions with ease",
+        default_permissions=discord.Permissions(manage_channels=True),
+        guild_only=True,
+    )
+
     @app_commands.command()
+    @app_commands.guild_only()
+    async def suggest(self, interaction: discord.Interaction, attachment: Optional[discord.Attachment] = None) -> None:
+        """Post a suggestion.
+
+        Parameters
+        ----------
+        attachment:
+            The file to attach to suggestion.
+        """
+        channel = await self.prompt_channel_select(interaction, prompt="In which channel do you want to post the suggestion?", ephemeral=True)
+        if not channel:
+            return
+
+        async with connect("databases/suggestions.db") as conn:
+            data = await conn.execute(
+                "SELECT * FROM config WHERE channel_id = ? and guild_id = ?",
+                (channel.id, interaction.guild_id),
+                fetch_one=True,
+            )
+
+        if data is None:
+            await interaction.edit_original_message(content=f"No suggestion channels are setup. Ask a moderator to use `/suggestions setup`.")
+            return
+
+        if not data["enabled"]:
+            await interaction.edit_original_message(content=f"{CustomEmoji.DANGER} Suggestions are temporarily disabled in this channel.")
+            return
+
+        user: discord.Member = interaction.user  # type: ignore
+        guild: discord.Guild = interaction.guild  # type: ignore
+
+        role = guild.get_role(data["role_id"])
+
+        if role and role not in user.roles:
+            await interaction.edit_original_message(content=f"{CustomEmoji.CROSS} You need `{role.name}` role to post a suggestion in this channel.")
+            return
+
+        if attachment and not data["allow_attachments"]:
+            await interaction.edit_original_message(content=f"{CustomEmoji.CROSS} Attachments are not allowed in this channel.")
+            return
+
+        view = SuggestionConfirmation(author=interaction.user, data=data, channel=channel, attachment=attachment)
+        await interaction.edit_original_message(content=f"Posting a suggestion in {channel.mention}, click the button to proceed.", embed=None, view=view)
+        await view.wait()
+
+    @suggestions.command()
     async def setup(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
         """Setup suggestions in a channel.
 
@@ -339,7 +529,7 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
         )
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="remove-setup")
+    @suggestions.command(name="remove-setup")
     async def remove_setup(self, interaction: discord.Interaction) -> None:
         """Remove suggestions setup from a channel.
 
@@ -387,7 +577,7 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
                 embed=None,
             )
 
-    @app_commands.command(name="settings")
+    @suggestions.command(name="settings")
     async def settings(self, interaction: discord.Interaction) -> None:
         """View or edit the settings of a suggestion channel."""
         channel = await self.prompt_channel_select(interaction)
@@ -423,7 +613,7 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
                 await view.message.delete()
                 return
 
-    @app_commands.command(name="restrict")
+    @suggestions.command(name="restrict")
     async def restrict(self, interaction: discord.Interaction, role: Optional[discord.Role] = None) -> None:
         """Restrict posting of suggestions to a specific role.
 
@@ -483,7 +673,7 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
             )
             await interaction.edit_original_message(embed=embed, view=None, content=None)
 
-    @app_commands.command(name="unrestrict")
+    @suggestions.command(name="unrestrict")
     async def unrestrict(self, interaction: discord.Interaction) -> None:
         """Remove any restriction on posting of suggestions.
 
@@ -503,7 +693,11 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
         await interaction.edit_original_message(content=f"{CustomEmoji.SUCCESS} Removed role restriction from this channel.", embed=None, view=None)
 
 
-    blacklist = app_commands.Group(name="blacklist", description="Manage suggestions users blacklist")
+    blacklist = app_commands.Group(
+        name="blacklist",
+        description="Manage suggestions users blacklist",
+        parent=suggestions
+    )
 
     @blacklist.command()
     async def add(self, interaction: discord.Interaction, user: discord.Member, reason: Optional[str] = None) -> None:
