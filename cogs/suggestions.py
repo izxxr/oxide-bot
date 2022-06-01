@@ -103,7 +103,7 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
             )
             await interaction.response.send_message(":white_check_mark: Configured suggestions in %s" % channel.mention)
 
-    @app_commands.command(name="reset-channel")
+    @app_commands.command(name="reset")
     async def reset(self, interaction: discord.Interaction) -> None:
         """Completely reset suggestions setup.
 
