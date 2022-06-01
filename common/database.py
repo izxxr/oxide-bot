@@ -56,7 +56,7 @@ class _Connection:
     async def execute(
         self,
         sql: str,
-        values: Optional[Tuple[Any, ...]] = None,
+        values: Optional[Tuple[Any, ...]] = ...,
         *,
         fetch_one: Literal[False] = False,
         fetch_all: Literal[True] = True,
