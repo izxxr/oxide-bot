@@ -58,8 +58,9 @@ SETTINGS: Dict[str, Setting] = {
 
 
 class ChannelSelection(ui.View):
-    def __init__(self, *, timeout: Optional[float] = 180):
+    def __init__(self, *, author: discord.abc.Snowflake, timeout: Optional[float] = 180):
         super().__init__(timeout=timeout)
+        self.author = author
         self.channel = None
         self.canceled = False
 
@@ -108,6 +109,12 @@ class ChannelSelection(ui.View):
         self.canceled = True
         self.stop()
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message(f"{CustomEmoji.CROSS} You cannot interact with this.")
+            return False
+
+        return True
 
 class SuggestionSettingsModal(ui.Modal):
     toggle: ui.Select[Self] = ui.Select(
@@ -119,8 +126,17 @@ class SuggestionSettingsModal(ui.Modal):
         ],
     )
 
-    def __init__(self, *, parent: SuggestionSettings, title: str, value: str, channel_id: int) -> None:
+    def __init__(
+        self,
+        *,
+        author: discord.abc.Snowflake,
+        parent: SuggestionSettings,
+        title: str,
+        value: str,
+        channel_id: int
+    ) -> None:
         super().__init__(title=title)
+        self.author = author
         self.parent = parent
         self.value = value
         self.channel_id = channel_id
@@ -141,6 +157,13 @@ class SuggestionSettingsModal(ui.Modal):
             await interaction.response.defer()
             await self.parent.update(setting, value)
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message(f"{CustomEmoji.CROSS} You cannot interact with this.")
+            return False
+
+        return True
+
 
 class SuggestionSettings(ui.View):
     SETTING_PLACEHOLDER_TEXT = {
@@ -152,8 +175,9 @@ class SuggestionSettings(ui.View):
         1: "<:_:967991994888642580>",
     }
 
-    def __init__(self, *, timeout: Optional[float] = 180):
+    def __init__(self, *, author: discord.abc.Snowflake, timeout: Optional[float] = 180):
         super().__init__(timeout=timeout)
+        self.author = author
         self.channel: Optional[discord.abc.Snowflake] = None
         self.message: Optional[discord.Message] = None
         self.closed: bool = False
@@ -210,7 +234,13 @@ class SuggestionSettings(ui.View):
     async def settings_select(self, interaction: discord.Interaction, select: ui.Select[Self]) -> None:
         assert self.channel is not None
         value = select.values[0]
-        modal = SuggestionSettingsModal(parent=self, title=f"Editing: {SETTINGS[value].friendly_name}", value=value, channel_id=self.channel.id)
+        modal = SuggestionSettingsModal(
+            author=interaction.user,
+            parent=self,
+            title=f"Editing: {SETTINGS[value].friendly_name}",
+            value=value,
+            channel_id=self.channel.id
+        )
         await interaction.response.send_modal(modal)
 
     @ui.button(label="Close", style=discord.ButtonStyle.danger)
@@ -219,6 +249,12 @@ class SuggestionSettings(ui.View):
         self.closed = True
         self.stop()
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message(f"{CustomEmoji.CROSS} You cannot interact with this.")
+            return False
+
+        return True
 
 @app_commands.default_permissions(manage_channels=True)
 @app_commands.guild_only()
@@ -239,7 +275,7 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
         embed = discord.Embed(title="Suggestions • Channel Selection", color=Color.NEUTRAL)
         guild: discord.Guild = interaction.guild  # type: ignore
 
-        view = ChannelSelection()
+        view = ChannelSelection(author=interaction.user)
         channel_ids = await view.setup(guild)
 
         if not channel_ids:
@@ -315,7 +351,7 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
 
         await interaction.delete_original_message()
 
-        view = Confirmation()
+        view = Confirmation(author=interaction.user)
         view.confirm_button.style = discord.ButtonStyle.gray  # UX
         embed = discord.Embed(
             title=f" Suggestions • Setup Removal",
@@ -358,7 +394,7 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
         if not channel:
             return
 
-        view = SuggestionSettings()
+        view = SuggestionSettings(author=interaction.user)
         success = await view.setup(channel)
         if not success:
             await interaction.followup.send(f"{CustomEmoji.CROSS} An error occured. Try again.")
@@ -381,6 +417,77 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
             if view.closed:
                 await view.message.delete()
                 return
+
+    @app_commands.command(name="restrict")
+    async def restrict(self, interaction: discord.Interaction, role: Optional[discord.Role] = None) -> None:
+        """Restrict posting of suggestions to a specific role.
+
+        Parameters
+        ----------
+        role:
+            The role to restrict suggestions to. Omit this parameter to remove
+            restriction or view current role.
+        """
+        channel = await self.prompt_channel_select(interaction)
+        if not channel:
+            return
+
+        if role is None:
+            async with connect("databases/suggestions.db") as conn:
+                data = await conn.execute(
+                    "SELECT role_id FROM config WHERE channel_id = ?",
+                    (channel.id,),
+                    fetch_one=True,
+                )
+
+            if data is not None:
+                resolved_role = interaction.guild.get_role(data["role_id"])  # type: ignore
+            else:
+                await interaction.followup.send(f"No role restriction is configured on this channel.")
+                return
+
+            if resolved_role is None:
+                await interaction.followup.send(f"No role restriction is configured on this channel.")
+                return
+
+            embed = discord.Embed(
+                title=":construction: Suggestions • Role Restriction",
+                description=f"This suggestion channel is currently restricted to users with {resolved_role.mention} role. \n\nTo remove this restriction, use `/suggestions unrestrict`.",
+                color=Color.NEUTRAL,
+            )
+            await interaction.followup.send(embed=embed)
+        else:
+            async with connect("databases/suggestions.db") as conn:
+                await conn.execute(
+                    "UPDATE config SET role_id = ? WHERE channel_id = ?",
+                    (role.id, channel.id,),
+                )
+
+            embed = discord.Embed(
+                title=f"{CustomEmoji.SUCCESS} Suggestions • Role Restriction",
+                description=f"Restricted posting of suggestions in this channel to {role.mention} role. Users must have this role to post suggestions now.",
+                color=Color.SUCCESS,
+            )
+            await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="unrestrict")
+    async def unrestrict(self, interaction: discord.Interaction) -> None:
+        """Remove any restriction on posting of suggestions.
+
+        Parameters
+        ----------
+        role:
+            The role to restrict suggestions to. Omit this parameter to remove
+            restriction or view current role.
+        """
+        channel = await self.prompt_channel_select(interaction)
+        if not channel:
+            return
+
+        async with connect("databases/suggestions.db") as conn:
+            await conn.execute("UPDATE config SET role_id = NULL WHERE channel_id = ?", (channel.id,))
+
+        await interaction.followup.send(f"{CustomEmoji.SUCCESS} Removed role restriction from this channel.")
 
 
 async def setup(bot: OxideBot) -> None:

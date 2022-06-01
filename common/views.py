@@ -10,8 +10,9 @@ import discord
 
 
 class Confirmation(ui.View):
-    def __init__(self, prompt: str = "Are you sure?", *, timeout: Optional[float] = 180):
+    def __init__(self, author: discord.abc.Snowflake, prompt: str = "Are you sure?", *, timeout: Optional[float] = 180):
         super().__init__(timeout=timeout)
+        self.author = author
         self.prompt = prompt
         self.confirmed = None
 
