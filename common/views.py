@@ -15,13 +15,13 @@ class Confirmation(ui.View):
         self.prompt = prompt
         self.confirmed = None
 
-    @discord.ui.button(label="Confirm")
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.green)
     async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button[Self]) -> None:
         self.confirmed = True
         await interaction.response.defer()
         self.stop()
 
-    @discord.ui.button(label="Cancel")
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.gray)
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button[Self]) -> None:
         self.confirmed = False
         await interaction.response.defer()
