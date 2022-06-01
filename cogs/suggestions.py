@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 from typing_extensions import Self
+from dataclasses import dataclass
 from discord.ext import commands
 from discord import app_commands, ui
 
@@ -11,10 +12,49 @@ from common.database import connect
 from common.helpers import Color, CustomEmoji
 from common.views import Confirmation
 
+import asyncio
 import discord
 
 if TYPE_CHECKING:
     from common.bot import OxideBot
+
+
+@dataclass(frozen=True)
+class Setting:
+    value: str
+    friendly_name: str
+    description: str
+    enable_note: str
+    disable_note: str
+
+
+SETTINGS: Dict[str, Setting] = {
+    "allow_anonymous": Setting(value="allow_anonymous", friendly_name="Anonymous Suggestions",
+                               description="Allow users to post anonymous suggestions",
+                               enable_note="Enable anonymous suggestions",
+                               disable_note="Disable anonymous suggestions."),
+
+    "action_notification_enabled": Setting(value="action_notification_enabled",
+                                           friendly_name="Action Notification",
+                                           description="Send author a notification when suggestion is acted upon.",
+                                           enable_note="Enable action notification.",
+                                           disable_note="Disable action notification."),
+
+    "allow_attachments": Setting(value="allow_attachments", friendly_name="Attachments",
+                                 description="Allow users to include file attachments in suggestions",
+                                 enable_note="Allow attachments in suggestions.",
+                                 disable_note="Disallow attachments in suggestions."),
+
+    "allow_edits": Setting(value="allow_edits", friendly_name="Edits",
+                           description="Allow users to edit suggestions after posting.",
+                           enable_note="Enable edits after posting suggestion",
+                           disable_note="Disable edits after posting suggestion"),
+
+    "enabled": Setting(value="enabled", friendly_name="Toggle",
+                       description="Temporary disable or enable suggestions in channel.",
+                       enable_note="Enable the suggestion channel.",
+                       disable_note="Temporarily disable suggestions in this channel."),
+}
 
 
 class ChannelSelection(ui.View):
@@ -66,6 +106,117 @@ class ChannelSelection(ui.View):
     async def cancel_button(self, interaction: discord.Interaction, button: ui.Button[Self]) -> None:
         await interaction.response.defer()
         self.canceled = True
+        self.stop()
+
+
+class SuggestionSettingsModal(ui.Modal):
+    toggle: ui.Select[Self] = ui.Select(
+        max_values=1,
+        min_values=1,
+        options=[
+            discord.SelectOption(label="Enabled", description="Enable this setting", value="1"),
+            discord.SelectOption(label="Disabled", description="Disable this setting", value="0"),
+        ],
+    )
+
+    def __init__(self, *, parent: SuggestionSettings, title: str, value: str, channel_id: int) -> None:
+        super().__init__(title=title)
+        self.parent = parent
+        self.value = value
+        self.channel_id = channel_id
+
+        options = self.toggle.options
+        setting = SETTINGS[value]
+        options[0].description = setting.enable_note
+        options[1].description = setting.disable_note
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        async with connect("databases/suggestions.db") as conn:
+            value = int(self.toggle.values[0])
+            setting = self.value
+            await conn.execute(
+                f"UPDATE config SET {setting} = ? WHERE channel_id = ?",
+                (value, self.channel_id)
+            )
+            await interaction.response.defer()
+            await self.parent.update(setting, value)
+
+
+class SuggestionSettings(ui.View):
+    SETTING_PLACEHOLDER_TEXT = {
+        0: "DISABLED",
+        1: "ENABLED",
+    }
+    SETTING_PLACEHOLDER_EMOJI = {
+        0: "<:_:967991996344066059>",
+        1: "<:_:967991994888642580>",
+    }
+
+    def __init__(self, *, timeout: Optional[float] = 180):
+        super().__init__(timeout=timeout)
+        self.channel: Optional[discord.abc.Snowflake] = None
+        self.message: Optional[discord.Message] = None
+        self.closed: bool = False
+
+    async def update(self, setting: str, toggle: int) -> None:
+        assert self.message is not None
+        for option in self.settings_select.options:
+            value = option.value
+
+            if value == setting:
+                friendly_name = SETTINGS[value].friendly_name
+                toggle_text = self.SETTING_PLACEHOLDER_TEXT[toggle]
+                option.label = f"{friendly_name}: {toggle_text}"
+                option.emoji = discord.PartialEmoji.from_str(self.SETTING_PLACEHOLDER_EMOJI[toggle])
+                self.settings_select.placeholder = f"{toggle_text.capitalize()} \"{friendly_name}\" successfully."
+                break
+
+        await self.message.edit(view=self)
+        await asyncio.sleep(2)
+        self.settings_select.placeholder = "Settings"
+        await self.message.edit(view=self)
+
+    async def setup(self, channel: discord.abc.Snowflake) -> bool:
+        """Setups the view for the given channel."""
+        self.channel = channel
+        async with connect("databases/suggestions.db") as conn:
+            data: Optional[Dict[str, int]] = await conn.execute(
+                "SELECT * FROM config WHERE channel_id = ?",
+                (channel.id,),
+                fetch_one=True,
+            )
+            if not data:
+                return False
+
+        select = self.settings_select
+        select.options = []
+
+        for value, setting in SETTINGS.items():
+            toggle = data[value]
+            select.add_option(
+                label=f"{setting.friendly_name}: {self.SETTING_PLACEHOLDER_TEXT[toggle]}",
+                description=setting.description,
+                value=value,
+                emoji=self.SETTING_PLACEHOLDER_EMOJI[toggle],
+            )
+
+        return True
+
+    @ui.select(
+        placeholder="Settings",
+        min_values=1,
+        max_values=1,
+    )
+    async def settings_select(self, interaction: discord.Interaction, select: ui.Select[Self]) -> None:
+        assert self.channel is not None
+        value = select.values[0]
+        modal = SuggestionSettingsModal(parent=self, title=f"Editing: {SETTINGS[value].friendly_name}", value=value, channel_id=self.channel.id)
+        await interaction.response.send_modal(modal)
+
+    @ui.button(label="Close", style=discord.ButtonStyle.danger)
+    async def close_button(self, interaction: discord.Interaction, button: ui.Button[Self]) -> None:
+        await interaction.response.defer()
+        self.closed = True
         self.stop()
 
 
@@ -199,6 +350,38 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
                 view=None,
                 embed=None,
             )
+
+    @app_commands.command(name="settings")
+    async def settings(self, interaction: discord.Interaction) -> None:
+        """View or edit the settings of a suggestion channel."""
+        channel = await self.prompt_channel_select(interaction)
+        if not channel:
+            return
+
+        view = SuggestionSettings()
+        success = await view.setup(channel)
+        if not success:
+            await interaction.followup.send(f"{CustomEmoji.CROSS} An error occured. Try again.")
+            return
+
+        embed = discord.Embed(
+            title=":gear: Suggestions • Settings",
+            description=(
+                "Welcome to suggestions settings panel. From here, you can customize "
+                "the settings for suggestion channels according to your needs. "
+                "\n\n**In order to modify a setting, click on it from the dropdown below.**"
+            ),
+            color=Color.NEUTRAL,
+        )
+        view.message = await interaction.followup.send(embed=embed, view=view, wait=True)
+
+        while True:
+            await view.wait()
+
+            if view.closed:
+                await view.message.delete()
+                return
+
 
 async def setup(bot: OxideBot) -> None:
     await bot.add_cog(Suggestions(bot))
