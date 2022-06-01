@@ -397,7 +397,11 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
         view = SuggestionSettings(author=interaction.user)
         success = await view.setup(channel)
         if not success:
-            await interaction.followup.send(f"{CustomEmoji.CROSS} An error occured. Try again.")
+            await interaction.edit_original_message(
+                content=f"{CustomEmoji.CROSS} An error occured. Try again.",
+                embed=None,
+                view=None
+            )
             return
 
         embed = discord.Embed(
@@ -409,7 +413,8 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
             ),
             color=Color.NEUTRAL,
         )
-        view.message = await interaction.followup.send(embed=embed, view=view, wait=True)
+        await interaction.edit_original_message(embed=embed, view=view, content=None)
+        view.message = await interaction.original_message()
 
         while True:
             await view.wait()
@@ -443,11 +448,19 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
             if data is not None:
                 resolved_role = interaction.guild.get_role(data["role_id"])  # type: ignore
             else:
-                await interaction.followup.send(f"No role restriction is configured on this channel.")
+                await interaction.edit_original_message(
+                    content=f"No role restriction is configured on this channel.",
+                    embed=None,
+                    view=None
+                )
                 return
 
             if resolved_role is None:
-                await interaction.followup.send(f"No role restriction is configured on this channel.")
+                await interaction.edit_original_message(
+                    content=f"No role restriction is configured on this channel.",
+                    embed=None,
+                    view=None
+                )
                 return
 
             embed = discord.Embed(
@@ -455,7 +468,7 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
                 description=f"This suggestion channel is currently restricted to users with {resolved_role.mention} role. \n\nTo remove this restriction, use `/suggestions unrestrict`.",
                 color=Color.NEUTRAL,
             )
-            await interaction.followup.send(embed=embed)
+            await interaction.edit_original_message(embed=embed, view=None, content=None)
         else:
             async with connect("databases/suggestions.db") as conn:
                 await conn.execute(
@@ -468,7 +481,7 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
                 description=f"Restricted posting of suggestions in this channel to {role.mention} role. Users must have this role to post suggestions now.",
                 color=Color.SUCCESS,
             )
-            await interaction.followup.send(embed=embed)
+            await interaction.edit_original_message(embed=embed, view=None, content=None)
 
     @app_commands.command(name="unrestrict")
     async def unrestrict(self, interaction: discord.Interaction) -> None:
@@ -487,7 +500,80 @@ class Suggestions(commands.GroupCog, group_name="suggestions"):
         async with connect("databases/suggestions.db") as conn:
             await conn.execute("UPDATE config SET role_id = NULL WHERE channel_id = ?", (channel.id,))
 
-        await interaction.followup.send(f"{CustomEmoji.SUCCESS} Removed role restriction from this channel.")
+        await interaction.edit_original_message(content=f"{CustomEmoji.SUCCESS} Removed role restriction from this channel.", embed=None, view=None)
+
+
+    blacklist = app_commands.Group(name="blacklist", description="Manage suggestions users blacklist")
+
+    @blacklist.command()
+    async def add(self, interaction: discord.Interaction, user: discord.Member, reason: Optional[str] = None) -> None:
+        """Blacklist a user from posting suggestions.
+
+        Parameters
+        ----------
+        user:
+            The user to blacklist.
+        reason:
+            The reason of blacklisting.
+        """
+        channel = await self.prompt_channel_select(interaction)
+        if not channel:
+            return
+
+        async with connect("databases/suggestions.db") as conn:
+            existing = await conn.execute(
+                "SELECT * FROM blacklist WHERE channel_id = ? and user_id = ?",
+                (channel.id, user.id),
+                fetch_one=True,
+            )
+            if existing:
+                if reason is not None:
+                    await conn.execute(
+                        "UPDATE blacklist SET reason = ? where user_id = ? and channel_id = ?",
+                        (reason, user.id, channel.id)
+                    )
+                    await interaction.edit_original_message(
+                        content=f"{CustomEmoji.SUCCESS} User is already blacklisted, reason has been updated.",
+                        embed=None,
+                        view=None
+                    )
+                else:
+                    await interaction.edit_original_message(
+                        content=f"{CustomEmoji.SUCCESS} User is already blacklisted.",
+                        embed=None,
+                        view=None
+                    )
+            else:
+                await conn.execute(
+                    """INSERT INTO blacklist (guild_id, channel_id, user_id, reason)
+                       VALUES (?, ?, ?, ?)""",
+                    (interaction.guild_id, interaction.channel.id, user.id, reason)  # type: ignore
+                )
+                await interaction.edit_original_message(
+                    content=f"{CustomEmoji.SUCCESS} Successfully blacklisted {user}. They can no longer post suggestions in {channel.mention}.",
+                    view=None,
+                    embed=None,
+                )
+
+    @blacklist.command()
+    async def remove(self, interaction: discord.Interaction, user: discord.Member) -> None:
+        """Removes a user from blacklist.
+
+        Parameters
+        ----------
+        user:
+            The user to remove from blacklist.
+        """
+        channel = await self.prompt_channel_select(interaction)
+        if not channel:
+            return
+
+        async with connect("databases/suggestions.db") as conn:
+            await conn.execute(
+                "DELETE FROM blacklist WHERE channel_id = ? and user_id = ?",
+                (channel.id, user.id),
+            )
+            await interaction.edit_original_message(content=f"{CustomEmoji.SUCCESS} Successfully removed {user} from blacklist.", embed=None, view=None)
 
 
 async def setup(bot: OxideBot) -> None:
