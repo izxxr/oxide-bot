@@ -57,6 +57,13 @@ SETTINGS: Dict[str, Setting] = {
 }
 
 
+class SuggestionStatusType:
+    PENDING = 0
+    ACCEPTED = 1
+    DECLINED = 2
+    CONSIDERED = 3
+
+
 class SuggestionConfirmation(ui.View):
     def __init__(
         self,
@@ -179,7 +186,7 @@ class SuggestionEntryModal(ui.Modal):
                     attachment_url, anonymous, status, edited_at, action_updated_at, action_note)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)""",
                     (suggestion_id, interaction.guild_id, channel.id, interaction.user.id, message.id, content,
-                    attachment and attachment.url, is_anonymous, 0),  # type: ignore
+                    attachment and attachment.url, is_anonymous, SuggestionStatusType.PENDING),  # type: ignore
                 )
                 embed = discord.Embed(
                     title=f"{CustomEmoji.SUCCESS} Suggestions • Posted",
@@ -464,6 +471,21 @@ class Suggestions(commands.Cog):
             return
 
         async with connect("databases/suggestions.db") as conn:
+            blacklisted = await conn.execute(
+                "SELECT reason FROM blacklist WHERE guild_id = ? AND user_id = ? AND channel_id = ?",
+                (interaction.guild_id, interaction.user.id, channel.id),
+                fetch_one=True,
+            )
+            if blacklisted:
+                embed = discord.Embed(
+                    title=f"{CustomEmoji.DANGER} Suggestions • Blacklisted",
+                    description="You are blacklisted from posting suggestions in this channel.",
+                    color=Color.DANGER,
+                )
+                embed.add_field(name="Reason", value=blacklisted["reason"])
+                await interaction.edit_original_message(embed=None, view=None, content=None)
+                return
+
             data = await conn.execute(
                 "SELECT * FROM config WHERE channel_id = ? and guild_id = ?",
                 (channel.id, interaction.guild_id),
