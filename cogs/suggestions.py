@@ -144,7 +144,7 @@ class SuggestionEntryModal(ui.Modal):
 
         async with connect("databases/suggestions.db") as conn:
             suggestions = await conn.execute(
-                "SELECT suggestion_id FROM store WHERE guild_id = ?",
+                "SELECT id FROM store WHERE guild_id = ?",
                 (interaction.guild_id,),
                 fetch_all=True,
             )
