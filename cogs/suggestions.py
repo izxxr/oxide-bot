@@ -449,6 +449,101 @@ class Suggestions(commands.Cog):
 
         return channel  # type: ignore # Always TextChannel
 
+    async def update_suggestion_status(
+        self,
+        interaction: discord.Interaction,
+        status: int,
+        suggestion_id: int,
+        note: Optional[str] = None,
+    ) -> None:
+        await interaction.response.defer()
+        async with connect("databases/suggestions.db") as conn:
+            suggestion = await conn.execute(
+                "SELECT * FROM store WHERE guild_id = ? AND id = ?",
+                (interaction.guild_id, suggestion_id),
+                fetch_one=True,
+            )
+
+            if suggestion is None:
+                await interaction.followup.send(f"{CustomEmoji.CROSS} Invalid suggestion ID.")
+                return
+
+        if int(suggestion["status"]) != SuggestionStatusType.PENDING:
+            await interaction.followup.send(f"{CustomEmoji.CROSS} That suggestion is already acted upon.")
+            return
+
+        channel_id = suggestion["channel_id"]
+        message_id = suggestion["message_id"]
+
+        channel: discord.TextChannel = interaction.guild.get_channel(channel_id)  # type: ignore
+
+        try:
+            message = await channel.fetch_message(message_id)
+        except discord.NotFound:
+            await interaction.followup.send(f"{CustomEmoji.CROSS} Suggestion message not found.")
+        else:
+            now = discord.utils.utcnow()
+            async with connect("databases/suggestions.db") as conn:
+                await conn.execute(
+                    f"""UPDATE store SET status = {status},
+                        action_updated_at = ?, action_note = ? WHERE guild_id = ?
+                        AND id = ?""",
+                    (now.isoformat(), note, interaction.guild_id, suggestion_id),
+                )
+                config = await conn.execute(
+                    "SELECT action_notification_enabled FROM config WHERE channel_id = ?",
+                    (suggestion["channel_id"],),
+                    fetch_one=True,
+                )
+
+                if config is None:
+                    await interaction.followup.send(f"{CustomEmoji.CROSS} Suggestion channel not found.")
+                    return
+
+            if status == SuggestionStatusType.ACCEPTED:
+                status_friendly = "accepted"
+                color = Color.SUCCESS
+            elif status == SuggestionStatusType.DECLINED:
+                status_friendly = "declined"
+                color = Color.DANGER
+            else:
+                status_friendly = "considered"
+                color = Color.WARNING
+
+            embed = message.embeds[0]
+            embed.set_footer(text=f"Status: {status_friendly.capitalize()}")
+            embed.color = color
+            embed.timestamp = now
+            if note:
+                embed.add_field(name="Staff Note", value=note)
+            await message.edit(embed=embed)
+
+            msg = f"{CustomEmoji.SUCCESS} Suggestion status has been updated successfully."
+
+            if config["action_notification_enabled"]:
+                member = interaction.guild.get_member(suggestion["author_id"])  # type: ignore
+
+                if member is None:
+                    msg += " Suggestion author could not be notified because they left the guild."
+                else:
+                    embed = discord.Embed(
+                        title=f"{CustomEmoji.SUCCESS} Suggestions • Action",
+                        description=f"Your suggestion #{suggestion['id']} in **{interaction.guild.name}** has been {status_friendly}.",  # type: ignore
+                        color=color,
+                    )
+                    if note:
+                        embed.add_field(name="Staff Note", value=note)
+                    embed.add_field(name="Jump to Suggestion", value=f"[Click here...]({message.jump_url})")
+
+                    try:
+                        await member.send(embed=embed)
+                    except discord.Forbidden:
+                        msg += " Suggestion author could not be notified."
+                    else:
+                        msg += " Suggestion author was notified."
+
+            await interaction.followup.send(msg)
+
     suggestions = app_commands.Group(
         name="suggestions",
         description="Manage suggestions with ease",
@@ -714,6 +809,49 @@ class Suggestions(commands.Cog):
 
         await interaction.edit_original_message(content=f"{CustomEmoji.SUCCESS} Removed role restriction from this channel.", embed=None, view=None)
 
+    @suggestions.command(name="accept")
+    @app_commands.rename(suggestion_id="suggestion-id")
+    async def accept(self, interaction: discord.Interaction, suggestion_id: int, note: Optional[str] = None) -> None:
+        """Accepts a suggestion.
+
+        Parameters
+        ----------
+        suggestion-id:
+            The ID of suggestion that you want to accept.
+        note:
+            The optional note for this action.
+        """
+        await self.update_suggestion_status(interaction, SuggestionStatusType.ACCEPTED, suggestion_id, note)
+
+
+    @suggestions.command(name="decline")
+    @app_commands.rename(suggestion_id="suggestion-id")
+    async def decline(self, interaction: discord.Interaction, suggestion_id: int, note: Optional[str] = None) -> None:
+        """Decline a suggestion.
+
+        Parameters
+        ----------
+        suggestion-id:
+            The ID of suggestion that you want to decline.
+        note:
+            The optional note for this action.
+        """
+        await self.update_suggestion_status(interaction, SuggestionStatusType.DECLINED, suggestion_id, note)
+
+
+    @suggestions.command(name="consider")
+    @app_commands.rename(suggestion_id="suggestion-id")
+    async def consider(self, interaction: discord.Interaction, suggestion_id: int, note: Optional[str] = None) -> None:
+        """Consider a suggestion.
+
+        Parameters
+        ----------
+        suggestion-id:
+            The ID of suggestion that you want to consider.
+        note:
+            The optional note for this action.
+        """
+        await self.update_suggestion_status(interaction, SuggestionStatusType.CONSIDERED, suggestion_id, note)
 
     blacklist = app_commands.Group(
         name="blacklist",
