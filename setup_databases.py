@@ -18,7 +18,7 @@ ENTIRES: Dict[str, Tuple[str, ...]] = {
             guild_id INT, channel_id INT, user_id INT, reason TEXT DEFAULT NULL
         )""",
         """CREATE TABLE IF NOT EXISTS store (
-            guild_id INT, channel_id INT, author_id INT, message_id INT, content TEXT,
+            id INT, guild_id INT, channel_id INT, author_id INT, message_id INT, content TEXT,
             attachment_url TEXT, anonymous INT, status TEXT, edited_at TEXT,
             action_updated_at TEXT, action_note TEXT
         )""",

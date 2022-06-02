@@ -137,7 +137,7 @@ class SuggestionEntryModal(ui.Modal):
 
         async with connect("databases/suggestions.db") as conn:
             suggestions = await conn.execute(
-                "SELECT message_id FROM store WHERE guild_id = ?",
+                "SELECT suggestion_id FROM store WHERE guild_id = ?",
                 (interaction.guild_id,),
                 fetch_all=True,
             )
@@ -175,10 +175,10 @@ class SuggestionEntryModal(ui.Modal):
                 )
             else:
                 await conn.execute(
-                    """INSERT INTO store (guild_id, channel_id, author_id, message_id, content,
+                    """INSERT INTO store (id, guild_id, channel_id, author_id, message_id, content,
                     attachment_url, anonymous, status, edited_at, action_updated_at, action_note)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)""",
-                    (interaction.guild_id, channel.id, interaction.user.id, message.id, content,
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)""",
+                    (suggestion_id, interaction.guild_id, channel.id, interaction.user.id, message.id, content,
                     attachment and attachment.url, is_anonymous, 0),  # type: ignore
                 )
                 embed = discord.Embed(
