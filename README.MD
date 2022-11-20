@@ -8,9 +8,9 @@ bear in mind that you will not get any support regarding that on this repository
 Discord servers.
 
 The bot is currently under active development and is restricted to limited usage only. If you
-would like to use or test this bot, Contact nerdguyahmad#3195 on Discord.
+would like to use or test this bot, Contact izxxr#3195 on Discord.
 
 ## Contributing
 The bot is open to contributions. Feel free to fix bugs and implement new features. For major
-changes, you might want to discuss it prior to making changes. Contact nerdguyahmad#3195 on
+changes, you might want to discuss it prior to making changes. Contact izxxr#3195 on
 Discord for more info.
